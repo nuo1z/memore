@@ -1,0 +1,201 @@
+// Package server 实现 Memore 主 HTTP 服务器。
+// 基于 Echo 框架，注册以下路由：
+// - /healthz：健康检查
+// - /api/v1/*：gRPC-Gateway REST API
+// - /memos.api.v1.*：Connect RPC（浏览器直连）
+// - /o/get/attachment/*：原生 HTTP 文件服务（视频/音频 Range 请求）
+// - /*：前端静态文件（SPA fallback）
+// 后台运行器：S3 预签名 URL 自动刷新
+package server
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"runtime"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
+	"github.com/pkg/errors"
+
+	"github.com/usememos/memos/internal/profile"
+	storepb "github.com/usememos/memos/proto/gen/store"
+	apiv1 "github.com/usememos/memos/server/router/api/v1"
+	"github.com/usememos/memos/server/router/fileserver"
+	"github.com/usememos/memos/server/router/frontend"
+	mcprouter "github.com/usememos/memos/server/router/mcp"
+	"github.com/usememos/memos/server/runner/s3presign"
+	"github.com/usememos/memos/store"
+)
+
+type Server struct {
+	Secret  string
+	Profile *profile.Profile
+	Store   *store.Store
+
+	echoServer        *echo.Echo
+	httpServer        *http.Server
+	runnerCancelFuncs []context.CancelFunc
+}
+
+func NewServer(ctx context.Context, profile *profile.Profile, store *store.Store) (*Server, error) {
+	s := &Server{
+		Store:   store,
+		Profile: profile,
+	}
+
+	echoServer := echo.New()
+	echoServer.Use(middleware.Recover())
+	s.echoServer = echoServer
+
+	instanceBasicSetting, err := s.getOrUpsertInstanceBasicSetting(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get instance basic setting")
+	}
+
+	secret := "usememos"
+	if !profile.Demo {
+		secret = instanceBasicSetting.SecretKey
+	}
+	s.Secret = secret
+
+	// Register healthz endpoint.
+	echoServer.GET("/healthz", func(c *echo.Context) error {
+		return c.String(http.StatusOK, "Service ready.")
+	})
+
+	// Serve frontend static files.
+	frontend.NewFrontendService(profile, store).Serve(ctx, echoServer)
+
+	apiV1Service := apiv1.NewAPIV1Service(s.Secret, profile, store)
+
+	// Register HTTP file server routes BEFORE gRPC-Gateway to ensure proper range request handling for Safari.
+	// This uses native HTTP serving (http.ServeContent) instead of gRPC for video/audio files.
+	fileServerService := fileserver.NewFileServerService(s.Profile, s.Store, s.Secret)
+	fileServerService.RegisterRoutes(echoServer)
+
+	// Register remote attachment proxy with CORS for Memore sync.
+	// The remote /file/attachments/* route has no CORS headers, so the browser blocks
+	// cross-origin fetches. This proxy endpoint lets the frontend download remote
+	// attachments through the local backend, bypassing CORS entirely.
+	proxyCORS := middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: []string{"*"},
+		AllowMethods: []string{http.MethodPost, http.MethodOptions},
+		AllowHeaders: []string{"*"},
+	})
+	fileServerService.RegisterProxyRoutes(echoServer, proxyCORS)
+
+	// Register gRPC gateway as api v1 (includes SSE endpoint on CORS-enabled group).
+	if err := apiV1Service.RegisterGateway(ctx, echoServer); err != nil {
+		return nil, errors.Wrap(err, "failed to register gRPC gateway")
+	}
+
+	// Register MCP server.
+	mcpService := mcprouter.NewMCPService(s.Store, s.Secret)
+	mcpService.RegisterRoutes(echoServer)
+
+	return s, nil
+}
+
+func (s *Server) Start(ctx context.Context) error {
+	var address, network string
+	if len(s.Profile.UNIXSock) == 0 {
+		address = fmt.Sprintf("%s:%d", s.Profile.Addr, s.Profile.Port)
+		network = "tcp"
+	} else {
+		address = s.Profile.UNIXSock
+		network = "unix"
+	}
+	listener, err := net.Listen(network, address)
+	if err != nil {
+		return errors.Wrap(err, "failed to listen")
+	}
+
+	// Start Echo server directly (no cmux needed - all traffic is HTTP).
+	s.httpServer = &http.Server{Handler: s.echoServer}
+	go func() {
+		if err := s.httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+			slog.Error("failed to start echo server", "error", err)
+		}
+	}()
+	s.StartBackgroundRunners(ctx)
+
+	return nil
+}
+
+func (s *Server) Shutdown(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	slog.Info("server shutting down")
+
+	// Cancel all background runners
+	for _, cancelFunc := range s.runnerCancelFuncs {
+		if cancelFunc != nil {
+			cancelFunc()
+		}
+	}
+
+	// Shutdown HTTP server.
+	if s.httpServer != nil {
+		if err := s.httpServer.Shutdown(ctx); err != nil {
+			slog.Error("failed to shutdown server", slog.String("error", err.Error()))
+		}
+	}
+
+	// Close database connection.
+	if err := s.Store.Close(); err != nil {
+		slog.Error("failed to close database", slog.String("error", err.Error()))
+	}
+
+	slog.Info("memos stopped properly")
+}
+
+func (s *Server) StartBackgroundRunners(ctx context.Context) {
+	// Create a separate context for each background runner
+	// This allows us to control cancellation for each runner independently
+	s3Context, s3Cancel := context.WithCancel(ctx)
+
+	// Store the cancel function so we can properly shut down runners
+	s.runnerCancelFuncs = append(s.runnerCancelFuncs, s3Cancel)
+
+	// Create and start S3 presign runner
+	s3presignRunner := s3presign.NewRunner(s.Store)
+	s3presignRunner.RunOnce(ctx)
+
+	// Start continuous S3 presign runner
+	go func() {
+		s3presignRunner.Run(s3Context)
+		slog.Info("s3presign runner stopped")
+	}()
+
+	// Log the number of goroutines running
+	slog.Info("background runners started", "goroutines", runtime.NumGoroutine())
+}
+
+func (s *Server) getOrUpsertInstanceBasicSetting(ctx context.Context) (*storepb.InstanceBasicSetting, error) {
+	instanceBasicSetting, err := s.Store.GetInstanceBasicSetting(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get instance basic setting")
+	}
+	modified := false
+	if instanceBasicSetting.SecretKey == "" {
+		instanceBasicSetting.SecretKey = uuid.NewString()
+		modified = true
+	}
+	if modified {
+		instanceSetting, err := s.Store.UpsertInstanceSetting(ctx, &storepb.InstanceSetting{
+			Key:   storepb.InstanceSettingKey_BASIC,
+			Value: &storepb.InstanceSetting_BasicSetting{BasicSetting: instanceBasicSetting},
+		})
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to upsert instance setting")
+		}
+		instanceBasicSetting = instanceSetting.GetBasicSetting()
+	}
+	return instanceBasicSetting, nil
+}

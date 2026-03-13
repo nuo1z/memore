@@ -1,0 +1,240 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "./themes/default.css";
+
+@theme {
+  --default-transition-duration: 150ms;
+}
+
+:root {
+  --memore-visual-viewport-offset: 0px;
+  --memore-status-bar-height: 0px;
+  --memore-status-bar-height-fallback: 24px;
+  --memore-status-bar-effective-height: 24px;
+  --memore-status-bar-fill: #ffffff;
+  --memore-android-safe-top: 0px;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-none ring-0;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  *::-webkit-scrollbar {
+    display: none;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  html.mobile-capacitor-android {
+    --memore-status-bar-effective-height: max(var(--memore-status-bar-height), var(--memore-status-bar-height-fallback));
+    --memore-android-safe-top: calc(max(env(safe-area-inset-top), 0px) + var(--memore-status-bar-effective-height));
+  }
+
+  html.mobile-capacitor-android body {
+    padding-top: 0;
+    padding-right: max(env(safe-area-inset-right), 0px);
+    padding-bottom: calc(max(env(safe-area-inset-bottom), 0px) + var(--memore-visual-viewport-offset));
+    padding-left: max(env(safe-area-inset-left), 0px);
+  }
+
+  html.mobile-capacitor-android .memore-mobile-safe-layout {
+    min-height: 100%;
+    padding-top: var(--memore-android-safe-top);
+  }
+
+  html.mobile-capacitor-android .memore-android-safe-top-fill {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 95;
+    pointer-events: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  html.mobile-capacitor-android [data-slot="sheet-overlay"],
+  html.mobile-capacitor-android [data-slot="dialog-overlay"] {
+    top: var(--memore-android-safe-top) !important;
+    bottom: 0 !important;
+    height: auto !important;
+  }
+
+  html.mobile-capacitor-android [data-slot="sheet-content"][data-side="left"],
+  html.mobile-capacitor-android [data-slot="sheet-content"][data-side="right"] {
+    top: var(--memore-android-safe-top) !important;
+    bottom: 0 !important;
+    height: auto !important;
+  }
+
+  html.mobile-capacitor-android .memore-focus-overlay {
+    top: var(--memore-android-safe-top) !important;
+    bottom: 0 !important;
+    height: auto !important;
+  }
+
+  html.mobile-capacitor-android .memore-android-safe-fixed-top {
+    top: var(--memore-android-safe-top) !important;
+    bottom: 0 !important;
+    height: auto !important;
+  }
+
+  /* 移动端主标题栏始终停在状态栏填充区之下，防止滚动/弹层时上窜到安全区。 */
+  html.mobile-capacitor-android .memore-mobile-header {
+    position: fixed !important;
+    top: var(--memore-android-safe-top) !important;
+    left: 0 !important;
+    right: 0 !important;
+    z-index: 30 !important;
+  }
+
+  .memore-mobile-header-placeholder {
+    display: none;
+  }
+
+  html.mobile-capacitor-android .memore-mobile-header-placeholder {
+    display: block;
+    width: 100%;
+    height: var(--memore-mobile-header-height, 52px);
+    flex-shrink: 0;
+  }
+
+  .memore-auth-brand {
+    font-family: "Cambria", "Palatino Linotype", "Georgia", "Times New Roman", serif;
+    font-weight: 700;
+    font-style: italic;
+    letter-spacing: 0.04em;
+  }
+
+  /* ========================================
+   * Embedded Content
+   * ======================================== */
+
+  /* iframes (e.g., YouTube embeds, maps) */
+  iframe {
+    max-width: 100%;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border);
+  }
+
+  /* KaTeX math rendering */
+  .katex-display {
+    overflow-x: auto;
+    overflow-y: hidden;
+    max-width: 100%;
+  }
+
+  /* Leaflet Popup Overrides */
+  .leaflet-popup-content-wrapper {
+    border-radius: 0.5rem !important;
+    border: 1px solid var(--border) !important;
+    background-color: var(--background) !important;
+    box-shadow: var(--shadow-lg) !important;
+  }
+
+  .leaflet-popup-content {
+    margin: 4px !important;
+    line-height: inherit !important;
+    font-size: inherit !important;
+  }
+
+  .leaflet-popup-tip {
+    background-color: var(--background) !important;
+  }
+
+  /* ========================================
+   * Focus Mode Animations
+   * ======================================== */
+
+  @keyframes focus-backdrop-enter {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes focus-editor-enter {
+    from {
+      opacity: 0;
+      transform: scale(0.96) translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+
+  @keyframes focus-editor-exit {
+    from {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+    to {
+      opacity: 0;
+      transform: scale(0.96) translateY(12px);
+    }
+  }
+
+  /* Vditor style bridge for Memore focus editor */
+  .memore-vditor-host .vditor {
+    border: none !important;
+    background-color: var(--card) !important;
+    color: var(--foreground) !important;
+  }
+
+  .memore-vditor-host .vditor-toolbar {
+    border-color: var(--border) !important;
+    background-color: var(--muted) !important;
+  }
+
+  .memore-vditor-host .vditor-toolbar .vditor-tooltipped {
+    color: var(--muted-foreground) !important;
+  }
+
+  .memore-vditor-host .vditor-toolbar .vditor-tooltipped:hover {
+    color: var(--foreground) !important;
+    background-color: var(--accent) !important;
+  }
+
+  .memore-vditor-host .vditor-reset,
+  .memore-vditor-host .vditor-ir pre,
+  .memore-vditor-host .vditor-sv .vditor-ir,
+  .memore-vditor-host .vditor-sv .vditor-wysiwyg,
+  .memore-vditor-host .vditor-preview {
+    background-color: var(--card) !important;
+    color: var(--foreground) !important;
+  }
+
+  html.mobile-capacitor-android .memore-vditor-host {
+    min-height: max(14rem, calc(22rem - var(--memore-visual-viewport-offset)));
+  }
+
+  html.mobile-capacitor-android .memore-vditor-host .vditor-toolbar {
+    display: grid !important;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    justify-items: center;
+    align-items: center;
+    gap: 6px;
+    padding: 8px;
+  }
+
+  html.mobile-capacitor-android .memore-vditor-host .vditor-toolbar__divider {
+    display: none !important;
+  }
+
+  html.mobile-capacitor-android .memore-vditor-host .vditor-toolbar button[data-type="edit-mode"] {
+    display: none !important;
+  }
+
+  html.mobile-capacitor-android .memore-vditor-host .vditor-toolbar .vditor-tooltipped {
+    width: 100%;
+    min-width: 0;
+    max-width: 40px;
+    margin: 0 !important;
+    justify-content: center;
+  }
+}

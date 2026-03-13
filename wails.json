@@ -1,0 +1,22 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Memore",
+  "outputfilename": "Memore",
+  "frontend:install": "echo skip",
+  "frontend:build": "echo skip",
+  "frontend:dev:watcher": "",
+  "frontend:dev:serverUrl": "",
+  "author": {
+    "name": "Memore",
+    "email": ""
+  },
+  "info": {
+    "companyName": "Memore",
+    "productName": "Memore",
+    "productVersion": "0.2.1",
+    "copyright": "Memore",
+    "comments": "A privacy-first, lightweight personal note-taking app"
+  },
+  "wailsjsdir": "",
+  "assetdir": ""
+}

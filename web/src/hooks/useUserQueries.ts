@@ -1,0 +1,246 @@
+import { create } from "@bufbuild/protobuf";
+import { FieldMaskSchema } from "@bufbuild/protobuf/wkt";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { shortcutServiceClient, userServiceClient } from "@/connect";
+import { buildUserSettingName } from "@/helpers/resource-names";
+import useCurrentUser from "@/hooks/useCurrentUser";
+import { User, UserSetting, UserSetting_GeneralSetting, UserSetting_Key, UserSettingSchema } from "@/types/proto/api/v1/user_service_pb";
+
+// 查询键工厂
+export const userKeys = {
+  all: ["users"] as const,
+  details: () => [...userKeys.all, "detail"] as const,
+  detail: (name: string) => [...userKeys.details(), name] as const,
+  stats: () => [...userKeys.all, "stats"] as const,
+  userStats: (name: string) => [...userKeys.stats(), name] as const,
+  currentUser: () => [...userKeys.all, "current"] as const,
+  shortcuts: () => [...userKeys.all, "shortcuts"] as const,
+  notifications: () => [...userKeys.all, "notifications"] as const,
+  byNames: (names: string[]) => [...userKeys.all, "byNames", ...names.sort()] as const,
+};
+
+export function useUser(name: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: userKeys.detail(name),
+    queryFn: async () => {
+      const user = await userServiceClient.getUser({ name });
+      return user;
+    },
+    enabled: options?.enabled ?? true,
+    staleTime: 1000 * 60 * 5, // 5 分钟：用户资料变化频率较低
+  });
+}
+
+export function useUserStats(username?: string) {
+  return useQuery({
+    queryKey: username ? userKeys.userStats(username) : userKeys.stats(),
+    queryFn: async () => {
+      if (!username) {
+        throw new Error("Username is required");
+      }
+      const stats = await userServiceClient.getUserStats({ name: username });
+      return stats;
+    },
+    enabled: !!username,
+  });
+}
+
+export function useShortcuts() {
+  return useQuery({
+    queryKey: userKeys.shortcuts(),
+    queryFn: async () => {
+      const { shortcuts } = await shortcutServiceClient.listShortcuts({});
+      return shortcuts;
+    },
+  });
+}
+
+export function useNotifications() {
+  const currentUser = useCurrentUser();
+
+  return useQuery({
+    queryKey: userKeys.notifications(),
+    queryFn: async () => {
+      if (!currentUser?.name) {
+        return [];
+      }
+      const { notifications } = await userServiceClient.listUserNotifications({ parent: currentUser.name });
+      return notifications;
+    },
+    enabled: !!currentUser?.name,
+    staleTime: 1000 * 30, // 30 秒：通知需要较频繁刷新
+  });
+}
+
+export function useTagCounts(forCurrentUser = false) {
+  const currentUser = useCurrentUser();
+
+  return useQuery({
+    queryKey: forCurrentUser ? [...userKeys.stats(), "tagCounts", "current"] : [...userKeys.stats(), "tagCounts", "all"],
+    queryFn: async () => {
+      if (forCurrentUser) {
+        // 仅获取当前用户的统计信息
+        if (!currentUser?.name) {
+          return {};
+        }
+        const stats = await userServiceClient.getUserStats({ name: currentUser.name });
+        return stats.tagCount || {};
+      } else {
+        // 获取所有用户统计信息
+        const { stats } = await userServiceClient.listAllUserStats({});
+
+        // 聚合所有用户的标签计数
+        const tagCount: Record<string, number> = {};
+        for (const userStats of stats) {
+          if (userStats.tagCount) {
+            for (const [tag, count] of Object.entries(userStats.tagCount)) {
+              tagCount[tag] = (tagCount[tag] || 0) + count;
+            }
+          }
+        }
+        return tagCount;
+      }
+    },
+    enabled: !forCurrentUser || !!currentUser?.name,
+    staleTime: 1000 * 60 * 2, // 2 分钟：标签统计变化频率较低
+  });
+}
+
+export function useUpdateUser() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ user, updateMask }: { user: Partial<User>; updateMask: string[] }) => {
+      const updatedUser = await userServiceClient.updateUser({
+        user: user as User,
+        updateMask: create(FieldMaskSchema, { paths: updateMask }),
+      });
+      return updatedUser;
+    },
+    onSuccess: (updatedUser) => {
+      queryClient.setQueryData(userKeys.detail(updatedUser.name), updatedUser);
+      queryClient.invalidateQueries({ queryKey: userKeys.currentUser() });
+    },
+  });
+}
+
+export function useDeleteUser() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (name: string) => {
+      await userServiceClient.deleteUser({ name });
+      return name;
+    },
+    onSuccess: (name) => {
+      queryClient.removeQueries({ queryKey: userKeys.detail(name) });
+      queryClient.invalidateQueries({ queryKey: userKeys.all });
+    },
+  });
+}
+
+// 获取用户设置
+export function useUserSettings(parent?: string) {
+  return useQuery({
+    queryKey: [...userKeys.all, "settings", parent],
+    queryFn: async () => {
+      if (!parent) return { settings: [], shortcuts: [] };
+      const [{ settings }, { shortcuts }] = await Promise.all([
+        userServiceClient.listUserSettings({ parent }),
+        shortcutServiceClient.listShortcuts({ parent }),
+      ]);
+      return { settings, shortcuts };
+    },
+    enabled: !!parent,
+  });
+}
+
+// 更新用户设置
+export function useUpdateUserSetting() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ setting, updateMask }: { setting: UserSetting; updateMask: string[] }) => {
+      const updatedSetting = await userServiceClient.updateUserSetting({
+        setting,
+        updateMask: create(FieldMaskSchema, { paths: updateMask }),
+      });
+      return updatedSetting;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [...userKeys.all, "settings"] });
+    },
+  });
+}
+
+// 拉取所有用户列表
+export function useListUsers() {
+  return useQuery({
+    queryKey: userKeys.all,
+    queryFn: async () => {
+      const { users } = await userServiceClient.listUsers({});
+      return users;
+    },
+  });
+}
+
+// 更新用户通用设置（便捷封装）
+export function useUpdateUserGeneralSetting(currentUserName?: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ generalSetting, updateMask }: { generalSetting: Partial<UserSetting_GeneralSetting>; updateMask: string[] }) => {
+      if (!currentUserName) {
+        throw new Error("No current user");
+      }
+
+      const settingName = buildUserSettingName(currentUserName, UserSetting_Key.GENERAL);
+      const userSetting = create(UserSettingSchema, {
+        name: settingName,
+        value: {
+          case: "generalSetting",
+          value: generalSetting as UserSetting_GeneralSetting,
+        },
+      });
+
+      const updatedSetting = await userServiceClient.updateUserSetting({
+        setting: userSetting,
+        updateMask: create(FieldMaskSchema, { paths: updateMask }),
+      });
+      return updatedSetting;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [...userKeys.all, "settings"] });
+    },
+  });
+}
+
+// 按名称批量拉取用户（返回 Map<name, User>）
+export function useUsersByNames(names: string[]) {
+  const enabled = names.length > 0;
+  const uniqueNames = Array.from(new Set(names));
+
+  return useQuery({
+    queryKey: userKeys.byNames(uniqueNames),
+    queryFn: async () => {
+      const users = await Promise.all(
+        uniqueNames.map(async (name) => {
+          try {
+            const user = await userServiceClient.getUser({ name });
+            return { name, user };
+          } catch {
+            return { name, user: undefined };
+          }
+        }),
+      );
+
+      const userMap = new Map<string, User | undefined>();
+      for (const { name, user } of users) {
+        userMap.set(name, user);
+      }
+      return userMap;
+    },
+    enabled,
+    staleTime: 1000 * 60 * 5, // 5 分钟：用户资料变化频率较低
+  });
+}
