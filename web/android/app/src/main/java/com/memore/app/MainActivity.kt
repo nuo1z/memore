@@ -4,7 +4,6 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import com.getcapacitor.BridgeActivity
-import mobile.Mobile
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
@@ -16,7 +15,6 @@ class MainActivity : BridgeActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     // 先启动前台服务，再初始化 WebView 容器。
     MemoreServerService.start(this)
-    waitForServerBootstrap()
     super.onCreate(savedInstanceState)
     onBackPressedDispatcher.addCallback(
       this,
@@ -78,17 +76,8 @@ class MainActivity : BridgeActivity() {
           }
           return@execute
         }
-        Thread.sleep(250)
+        Thread.sleep(150)
       }
-    }
-  }
-
-  private fun waitForServerBootstrap() {
-    repeat(40) {
-      if (Mobile.isRunning()) {
-        return
-      }
-      Thread.sleep(50)
     }
   }
 

@@ -21,7 +21,7 @@ Please forgive any unconventional coding practices in the project  \_(¦3」∠)
 
 I've kept the `AGENTS.md` file in the repository, which documents the AI collaboration process and prompt logic. If you have any brilliant optimization solutions or creative ideas, you are more than welcome to Fork the project for secondary development or submit a PR directly. Looking forward to your contributions~
 
-Current version: **v0.2.1**
+Current version: **v0.3.0**
 
 ## 核心特性 - Key Features
 

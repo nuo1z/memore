@@ -101,7 +101,7 @@ for folder, size in foreground_sizes.items():
     target_dir = os.path.join(android_res, folder)
     os.makedirs(target_dir, exist_ok=True)
     fg = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    icon_size = int(size * 0.65)
+    icon_size = int(size * 0.50)
     icon_resized = img.resize((icon_size, icon_size), Image.LANCZOS)
     offset = (size - icon_size) // 2
     fg.paste(icon_resized, (offset, offset), icon_resized)

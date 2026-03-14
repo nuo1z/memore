@@ -8,7 +8,7 @@
  */
 export const MEMORE_SYNC_TRIGGER_EVENT = "memore-sync-trigger";
 
-export type MemoreSyncTriggerReason = "memo-created" | "memo-updated" | "manual";
+export type MemoreSyncTriggerReason = "memo-created" | "memo-updated" | "memo-deleted" | "manual";
 
 export interface MemoreSyncTriggerEventDetail {
   reason: MemoreSyncTriggerReason;

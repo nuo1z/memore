@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { XIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-hot-toast";
 import { Button } from "@/components/ui/button";
@@ -148,9 +149,22 @@ const MemoEditorImpl: React.FC<MemoEditorProps> = ({
     [actions, dispatch],
   );
 
-  const normalizedCurrentTags = useMemo(() => {
-    return new Set(Array.from(state.content.matchAll(/(^|\s)#([\w\u4e00-\u9fa5/-]+)/g), (match) => match[2].toLowerCase()));
+  const currentTags = useMemo(() => {
+    const seen = new Set<string>();
+    const tags: string[] = [];
+    for (const match of state.content.matchAll(/(^|\s)#([\w\u4e00-\u9fa5/-]+)/g)) {
+      const key = match[2].toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        tags.push(match[2]);
+      }
+    }
+    return tags;
   }, [state.content]);
+
+  const normalizedCurrentTags = useMemo(() => {
+    return new Set(currentTags.map((t) => t.toLowerCase()));
+  }, [currentTags]);
 
   const suggestedTags = useMemo(() => {
     return Object.entries(tagCount)
@@ -175,10 +189,38 @@ const MemoEditorImpl: React.FC<MemoEditorProps> = ({
         return;
       }
 
-      const separator = state.content.trim().length === 0 ? "" : state.content.endsWith("\n") ? "" : "\n";
-      dispatch(actions.updateContent(`${state.content}${separator}#${sanitizedTag} `));
+      const content = state.content;
+      if (content.trim().length === 0) {
+        dispatch(actions.updateContent(`#${sanitizedTag} `));
+        return;
+      }
+
+      const lines = content.split("\n");
+      const firstLine = lines[0];
+      if (/^\s*#[\w\u4e00-\u9fa5/-]/.test(firstLine)) {
+        lines[0] = `${firstLine.trimEnd()} #${sanitizedTag}`;
+        dispatch(actions.updateContent(lines.join("\n")));
+      } else {
+        dispatch(actions.updateContent(`#${sanitizedTag} \n${content}`));
+      }
     },
     [actions, dispatch, normalizedCurrentTags, state.content],
+  );
+
+  const removeTagFromContent = useCallback(
+    (tag: string) => {
+      let content = state.content;
+      const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      content = content.replace(new RegExp(`(^|\\s)#${escaped}(?=\\s|$)`, "g"), (match, prefix) => {
+        return prefix === "\n" ? "\n" : "";
+      });
+      content = content.replace(/^\s*\n/, "");
+      content = content.replace(/  +/g, " ").trim();
+      if (content !== state.content.trim()) {
+        dispatch(actions.updateContent(content));
+      }
+    },
+    [actions, dispatch, state.content],
   );
 
   const handleCreateTag = useCallback(() => {
@@ -284,25 +326,39 @@ const MemoEditorImpl: React.FC<MemoEditorProps> = ({
               className="flex-1 min-h-0"
             />
 
-            <div className="w-full flex flex-row items-center gap-1 flex-wrap px-1 py-1">
-              <span className="text-xs text-muted-foreground shrink-0 mr-0.5">{t("common.tags")}:</span>
+            <div className="w-full flex flex-row items-center gap-1 flex-wrap px-1 py-0.5 max-h-[3.5rem] overflow-y-auto">
+              {currentTags.map((tag) => (
+                <span
+                  key={`cur-${tag}`}
+                  className="inline-flex items-center gap-0.5 h-5 px-1.5 text-xs rounded-md bg-accent text-accent-foreground shrink-0"
+                >
+                  #{tag}
+                  <button
+                    type="button"
+                    className="ml-0.5 hover:text-destructive"
+                    onClick={() => removeTagFromContent(tag)}
+                  >
+                    <XIcon className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
               {suggestedTags.map((tag) => (
                 <Button
-                  key={tag}
+                  key={`sug-${tag}`}
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="h-6 px-1.5 text-xs shrink-0"
+                  className="h-5 px-1.5 text-xs shrink-0 opacity-60 hover:opacity-100"
                   onClick={() => appendTagToContent(tag)}
                 >
                   #{tag}
                 </Button>
               ))}
               <Input
-                className="h-6 w-20 sm:w-24 px-1.5 text-xs shrink-0"
+                className="h-5 w-24 px-1.5 text-xs shrink-0"
                 value={customTagInput}
                 onChange={(event) => setCustomTagInput(event.target.value)}
-                placeholder="#new"
+                placeholder="#parent/child"
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
@@ -310,7 +366,7 @@ const MemoEditorImpl: React.FC<MemoEditorProps> = ({
                   }
                 }}
               />
-              <Button type="button" variant="outline" size="sm" className="h-6 px-1.5 text-xs shrink-0" onClick={handleCreateTag}>
+              <Button type="button" variant="outline" size="sm" className="h-5 px-1 text-xs shrink-0" onClick={handleCreateTag}>
                 +
               </Button>
             </div>

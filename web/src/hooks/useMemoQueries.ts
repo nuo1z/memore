@@ -141,12 +141,11 @@ export function useDeleteMemo() {
       return name;
     },
     onSuccess: (name) => {
-      // Remove from cache
       queryClient.removeQueries({ queryKey: memoKeys.detail(name) });
-      // Invalidate lists
       queryClient.invalidateQueries({ queryKey: memoKeys.lists() });
-      // Invalidate user stats
       queryClient.invalidateQueries({ queryKey: userKeys.stats() });
+
+      triggerMemoreSync({ reason: "memo-deleted" });
     },
   });
 }

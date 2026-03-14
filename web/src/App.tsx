@@ -258,8 +258,8 @@ const App = () => {
 
       const { SplashScreen } = await import("@capacitor/splash-screen");
       window.setTimeout(() => {
-        void SplashScreen.hide({ fadeOutDuration: 250 });
-      }, 450);
+        void SplashScreen.hide({ fadeOutDuration: 150 });
+      }, 150);
     };
 
     void setupSplash();

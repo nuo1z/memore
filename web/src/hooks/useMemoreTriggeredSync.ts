@@ -16,6 +16,7 @@ import { userKeys } from "@/hooks/useUserQueries";
 import {
   type MemoreRemoteConnectionTestErrorCode,
   runMemoreSyncTaskWithLock,
+  syncMemoreComments,
   syncMemoreLocalMemosToRemote,
   syncMemoreRemoteMemosToLocal,
   updateMemoreSyncBackgroundRuntimeStatus,
@@ -130,7 +131,9 @@ export const useMemoreTriggeredSync = (enabled: boolean) => {
               return { phase: "pull-confirm" as const, pushResult, pullResult };
             }
 
-            return { phase: "pull" as const, pushResult, pullResult };
+            const commentResult = await syncMemoreComments({ serverUrl, accessToken });
+
+            return { phase: "done" as const, pushResult, pullResult, commentResult };
           });
         };
 
@@ -229,11 +232,21 @@ export const useMemoreTriggeredSync = (enabled: boolean) => {
           (pullResult.deletedCount ?? 0) > 0 ||
           (pullResult.conflictCount ?? 0) > 0;
 
-        if (hasPushChanges || hasPullChanges) {
-          await Promise.all([
+        const commentResult = cycleResult.commentResult;
+        const hasCommentChanges = commentResult &&
+          ((commentResult.pushedCount ?? 0) > 0 || (commentResult.pulledCount ?? 0) > 0 || (commentResult.deletedCount ?? 0) > 0);
+
+        if (hasPushChanges || hasPullChanges || hasCommentChanges) {
+          const invalidations: Promise<void>[] = [
             queryClient.invalidateQueries({ queryKey: memoKeys.lists() }),
             queryClient.invalidateQueries({ queryKey: userKeys.stats() }),
-          ]);
+          ];
+          if (hasCommentChanges && commentResult?.affectedLocalMemoNames) {
+            for (const memoName of commentResult.affectedLocalMemoNames) {
+              invalidations.push(queryClient.invalidateQueries({ queryKey: memoKeys.comments(memoName) }));
+            }
+          }
+          await Promise.all(invalidations);
         }
 
         updateMemoreSyncBackgroundRuntimeStatus(serverUrl, {

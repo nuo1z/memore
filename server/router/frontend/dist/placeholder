@@ -1,2 +1,0 @@
-This is a placeholder file for go:embed.
-Run `pnpm --dir web release` to build the real frontend assets.

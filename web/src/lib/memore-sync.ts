@@ -862,26 +862,43 @@ const ensureLocalAttachmentForRemoteMemo = async (
   }
 };
 
+const ATTACHMENT_SYNC_CONCURRENCY = 3;
+
+const runWithConcurrency = async <T>(tasks: (() => Promise<T>)[], concurrency: number): Promise<T[]> => {
+  const results: T[] = [];
+  let idx = 0;
+  const workers = Array.from({ length: Math.min(concurrency, tasks.length) }, async () => {
+    while (idx < tasks.length) {
+      const currentIdx = idx++;
+      results[currentIdx] = await tasks[currentIdx]();
+    }
+  });
+  await Promise.all(workers);
+  return results;
+};
+
 const syncLocalMemoAttachmentsToRemote = async (
   localMemo: Memo,
   getRemoteAttachmentClient: () => RemoteAttachmentClient,
 ): Promise<{ attachmentReferences: Attachment[]; failedCount: number }> => {
+  if (localMemo.attachments.length === 0) return { attachmentReferences: [], failedCount: 0 };
+
+  const tasks = localMemo.attachments.map(
+    (localAttachment) => () => ensureRemoteAttachmentForLocalMemo(getRemoteAttachmentClient(), localAttachment),
+  );
+  const results = await runWithConcurrency(tasks, ATTACHMENT_SYNC_CONCURRENCY);
+
   const attachmentReferences: Attachment[] = [];
   let failedCount = 0;
-
-  for (const localAttachment of localMemo.attachments) {
-    const syncedAttachment = await ensureRemoteAttachmentForLocalMemo(getRemoteAttachmentClient(), localAttachment);
-    if (!syncedAttachment) {
+  for (const result of results) {
+    if (!result) {
       failedCount += 1;
-      continue;
+    } else {
+      attachmentReferences.push(result);
     }
-    attachmentReferences.push(syncedAttachment);
   }
 
-  return {
-    attachmentReferences,
-    failedCount,
-  };
+  return { attachmentReferences, failedCount };
 };
 
 interface AttachmentSyncFailure {
@@ -895,13 +912,21 @@ const syncRemoteMemoAttachmentsToLocal = async (
   accessToken: string,
   remoteAttachments: Attachment[],
 ): Promise<{ attachmentReferences: Attachment[]; failedCount: number; failures: AttachmentSyncFailure[] }> => {
+  if (remoteAttachments.length === 0) return { attachmentReferences: [], failedCount: 0, failures: [] };
+
+  const tasks = remoteAttachments.map(
+    (remoteAttachment) => async () => ({
+      result: await ensureLocalAttachmentForRemoteMemo(normalizedServerUrl, accessToken, remoteAttachment),
+      remoteAttachment,
+    }),
+  );
+  const results = await runWithConcurrency(tasks, ATTACHMENT_SYNC_CONCURRENCY);
+
   const attachmentReferences: Attachment[] = [];
   let failedCount = 0;
   const failures: AttachmentSyncFailure[] = [];
-
-  for (const remoteAttachment of remoteAttachments) {
-    const syncedAttachment = await ensureLocalAttachmentForRemoteMemo(normalizedServerUrl, accessToken, remoteAttachment);
-    if (!syncedAttachment) {
+  for (const { result, remoteAttachment } of results) {
+    if (!result) {
       failedCount += 1;
       const aid = remoteAttachment.name ? extractAttachmentIdFromName(remoteAttachment.name) : undefined;
       failures.push({
@@ -909,16 +934,12 @@ const syncRemoteMemoAttachmentsToLocal = async (
         attachmentId: aid ?? undefined,
         reason: remoteAttachment.externalLink ? "下载失败(含externalLink回退)" : "下载失败",
       });
-      continue;
+    } else {
+      attachmentReferences.push(result);
     }
-    attachmentReferences.push(syncedAttachment);
   }
 
-  return {
-    attachmentReferences,
-    failedCount,
-    failures,
-  };
+  return { attachmentReferences, failedCount, failures };
 };
 
 const loadImportedRemoteMemoMap = (): ImportedRemoteMemoMap => {
@@ -1695,8 +1716,8 @@ export const syncMemoreLocalMemosToRemote = async (input: MemoreRemotePullInput)
     includeState: syncArchived,
   };
 
-  const pageSize = Math.max(1, Math.min(500, input.pageSize ?? 100));
-  const maxPages = Math.max(1, Math.min(50, input.maxPages ?? 10));
+  const pageSize = Math.max(1, Math.min(500, input.pageSize ?? 200));
+  const maxPages = Math.max(1, Math.min(50, input.maxPages ?? 20));
   let pageToken = "";
   let pushedPages = 0;
   let totalLocalMemoCount = 0;
@@ -2043,8 +2064,8 @@ export const syncMemoreRemoteMemosToLocal = async (input: MemoreRemotePullInput)
   const syncPinned = input.syncPinned ?? false;
   const syncArchived = input.syncArchived ?? false;
   const metadataSyncEnabled = syncPinned || syncArchived;
-  const pageSize = Math.max(1, Math.min(500, input.pageSize ?? 100));
-  const maxPages = Math.max(1, Math.min(50, input.maxPages ?? metadataSyncEnabled ? 30 : 10));
+  const pageSize = Math.max(1, Math.min(500, input.pageSize ?? 200));
+  const maxPages = Math.max(1, Math.min(50, input.maxPages ?? (metadataSyncEnabled ? 30 : 20)));
   let pulledPages = 0;
   let totalMemoCount = 0;
   let importedCount = 0;
@@ -2732,5 +2753,350 @@ export const testMemoreRemoteConnection = async (input: MemoreRemoteConnectionTe
       ok: false,
       errorCode: "NETWORK",
     };
+  }
+};
+
+// ─── Comment Sync ────────────────────────────────────────────────────────────
+
+const MEMORE_COMMENT_BINDING_STORAGE_KEY = "memore-sync-comment-bindings";
+
+interface CommentBinding {
+  localCommentName: string;
+  parentLocalName: string;
+  parentRemoteName: string;
+  remoteUpdateTime?: string;
+  localUpdateTime?: string;
+}
+
+type CommentBindingMap = Record<string, Record<string, CommentBinding>>;
+
+const loadCommentBindingMap = (): CommentBindingMap => {
+  try {
+    const raw = localStorage.getItem(MEMORE_COMMENT_BINDING_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed)) return {};
+
+    const map: CommentBindingMap = {};
+    for (const [serverKey, bindings] of Object.entries(parsed)) {
+      if (!isRecord(bindings)) continue;
+      const serverBindings: Record<string, CommentBinding> = {};
+      for (const [remoteCommentName, binding] of Object.entries(bindings)) {
+        if (!isRecord(binding)) continue;
+        const localCommentName = readString(binding, "localCommentName");
+        const parentLocalName = readString(binding, "parentLocalName");
+        const parentRemoteName = readString(binding, "parentRemoteName");
+        if (!localCommentName || !parentLocalName || !parentRemoteName) continue;
+        serverBindings[remoteCommentName] = {
+          localCommentName,
+          parentLocalName,
+          parentRemoteName,
+          remoteUpdateTime: readString(binding, "remoteUpdateTime"),
+          localUpdateTime: readString(binding, "localUpdateTime"),
+        };
+      }
+      map[serverKey] = serverBindings;
+    }
+    return map;
+  } catch {
+    return {};
+  }
+};
+
+const persistCommentBindingMap = (map: CommentBindingMap) => {
+  try {
+    localStorage.setItem(MEMORE_COMMENT_BINDING_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // ignore
+  }
+};
+
+const getCommentBindings = (serverKey: string): Record<string, CommentBinding> => {
+  return loadCommentBindingMap()[serverKey] ?? {};
+};
+
+const setCommentBindings = (serverKey: string, bindings: Record<string, CommentBinding>) => {
+  const map = loadCommentBindingMap();
+  map[serverKey] = bindings;
+  persistCommentBindingMap(map);
+};
+
+export interface CommentSyncResult {
+  ok: boolean;
+  pushedCount: number;
+  pulledCount: number;
+  deletedCount: number;
+  failedCount: number;
+  /** Local memo names whose comments changed (for query invalidation) */
+  affectedLocalMemoNames: string[];
+}
+
+/**
+ * Bi-directional comment sync for all bound memo pairs.
+ * Called after push+pull of top-level memos.
+ */
+export const syncMemoreComments = async (input: {
+  serverUrl: string;
+  accessToken: string;
+}): Promise<CommentSyncResult> => {
+  const emptyResult: CommentSyncResult = { ok: false, pushedCount: 0, pulledCount: 0, deletedCount: 0, failedCount: 0, affectedLocalMemoNames: [] };
+  const normalizedServerUrl = normalizeMemoreRemoteServerUrl(input.serverUrl);
+  if (!normalizedServerUrl) return emptyResult;
+
+  const accessToken = input.accessToken.trim();
+  if (!accessToken) return emptyResult;
+
+  const memoBindings = getRemoteMemoBindings(normalizedServerUrl);
+  const commentBindings = getCommentBindings(normalizedServerUrl);
+  let pushedCount = 0;
+  let pulledCount = 0;
+  let deletedCount = 0;
+  let failedCount = 0;
+  const affectedLocalMemoNamesSet = new Set<string>();
+
+  const localToRemoteMemoMap = new Map<string, string>();
+  const remoteToLocalMemoMap = new Map<string, string>();
+  for (const [remoteName, binding] of Object.entries(memoBindings)) {
+    localToRemoteMemoMap.set(binding.localMemoName, remoteName);
+    remoteToLocalMemoMap.set(remoteName, binding.localMemoName);
+  }
+
+  // Build reverse lookup: localCommentName -> remoteCommentName
+  const localCommentToRemote = new Map<string, string>();
+  for (const [remoteCommentName, cb] of Object.entries(commentBindings)) {
+    localCommentToRemote.set(cb.localCommentName, remoteCommentName);
+  }
+
+  try {
+    // ── Push: local comments -> remote ──
+    for (const [localMemoName, remoteMemoName] of localToRemoteMemoMap) {
+      let localComments: Memo[];
+      try {
+        const resp = await memoServiceClient.listMemoComments({ name: localMemoName });
+        localComments = resp.memos;
+      } catch {
+        continue;
+      }
+
+      const remoteMemoId = extractMemoIdFromName(remoteMemoName);
+      const seenLocalCommentNames = new Set<string>();
+
+      for (const localComment of localComments) {
+        seenLocalCommentNames.add(localComment.name);
+        const existingRemoteCommentName = localCommentToRemote.get(localComment.name);
+        const localUpdateTimeRaw = getMemoUpdateTimeRaw(localComment);
+
+        if (existingRemoteCommentName) {
+          const cb = commentBindings[existingRemoteCommentName];
+          if (cb && cb.localUpdateTime === localUpdateTimeRaw) continue;
+
+          // Update existing remote comment
+          const remoteCommentId = extractMemoIdFromName(existingRemoteCommentName);
+          try {
+            const resp = await fetch(
+              `${normalizedServerUrl}/api/v1/memos/${encodeURIComponent(remoteCommentId)}?${new URLSearchParams({ updateMask: "content,visibility" }).toString()}`,
+              {
+                method: "PATCH",
+                headers: {
+                  Accept: "application/json",
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${accessToken}`,
+                },
+                body: JSON.stringify({
+                  content: localComment.content,
+                  visibility: toVisibilityString(localComment.visibility),
+                }),
+              },
+            );
+            if (resp.ok) {
+              const payload = await parseJsonIfPossible(resp);
+              commentBindings[existingRemoteCommentName] = {
+                ...cb!,
+                localUpdateTime: localUpdateTimeRaw,
+                remoteUpdateTime: readString(payload, "updateTime"),
+              };
+              affectedLocalMemoNamesSet.add(localMemoName);
+              pushedCount += 1;
+            } else {
+              failedCount += 1;
+            }
+          } catch {
+            failedCount += 1;
+          }
+        } else {
+          // Create new comment on remote
+          try {
+            const resp = await fetch(`${normalizedServerUrl}/api/v1/memos/${encodeURIComponent(remoteMemoId)}/comments`, {
+              method: "POST",
+              headers: {
+                Accept: "application/json",
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${accessToken}`,
+              },
+              body: JSON.stringify({
+                content: localComment.content,
+                visibility: toVisibilityString(localComment.visibility),
+              }),
+            });
+            if (resp.ok) {
+              const payload = await parseJsonIfPossible(resp);
+              const remoteCommentName = readString(payload, "name");
+              if (remoteCommentName) {
+                commentBindings[remoteCommentName] = {
+                  localCommentName: localComment.name,
+                  parentLocalName: localMemoName,
+                  parentRemoteName: remoteMemoName,
+                  remoteUpdateTime: readString(payload, "updateTime"),
+                  localUpdateTime: localUpdateTimeRaw,
+                };
+                localCommentToRemote.set(localComment.name, remoteCommentName);
+                affectedLocalMemoNamesSet.add(localMemoName);
+                pushedCount += 1;
+              }
+            } else {
+              failedCount += 1;
+            }
+          } catch {
+            failedCount += 1;
+          }
+        }
+      }
+
+      // Delete remote comments whose local counterpart is gone
+      for (const [remoteCommentName, cb] of Object.entries(commentBindings)) {
+        if (cb.parentLocalName !== localMemoName) continue;
+        if (seenLocalCommentNames.has(cb.localCommentName)) continue;
+
+        // Verify local comment is truly deleted
+        try {
+          await memoServiceClient.getMemo({ name: cb.localCommentName });
+          continue; // still exists
+        } catch (e) {
+          if (!isConnectNotFoundError(e)) continue;
+        }
+
+        const remoteCommentId = extractMemoIdFromName(remoteCommentName);
+        try {
+          await fetch(`${normalizedServerUrl}/api/v1/memos/${encodeURIComponent(remoteCommentId)}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          delete commentBindings[remoteCommentName];
+          localCommentToRemote.delete(cb.localCommentName);
+          affectedLocalMemoNamesSet.add(localMemoName);
+          deletedCount += 1;
+        } catch {
+          failedCount += 1;
+        }
+      }
+    }
+
+    // ── Pull: remote comments -> local ──
+    for (const [remoteMemoName, localMemoName] of remoteToLocalMemoMap) {
+      const remoteMemoId = extractMemoIdFromName(remoteMemoName);
+      let remoteComments: Record<string, unknown>[];
+      try {
+        const resp = await fetch(`${normalizedServerUrl}/api/v1/memos/${encodeURIComponent(remoteMemoId)}/comments`, {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+        });
+        if (!resp.ok) continue;
+        const payload = await parseJsonIfPossible(resp);
+        remoteComments = readMemos(payload) as Record<string, unknown>[];
+      } catch {
+        continue;
+      }
+
+      const seenRemoteCommentNames = new Set<string>();
+
+      for (const remoteCommentRaw of remoteComments) {
+        const remoteCommentName = readString(remoteCommentRaw, "name");
+        const remoteContent = readString(remoteCommentRaw, "content") ?? "";
+        const remoteUpdateTimeRaw = readString(remoteCommentRaw, "updateTime");
+        if (!remoteCommentName) continue;
+
+        seenRemoteCommentNames.add(remoteCommentName);
+        const existingCb = commentBindings[remoteCommentName];
+
+        if (existingCb) {
+          if (existingCb.remoteUpdateTime === remoteUpdateTimeRaw) continue;
+
+          // Update local comment
+          try {
+            await memoServiceClient.updateMemo({
+              memo: create(MemoSchema, {
+                name: existingCb.localCommentName,
+                content: remoteContent,
+                visibility: toVisibility(readString(remoteCommentRaw, "visibility")),
+              } as Record<string, unknown>),
+              updateMask: create(FieldMaskSchema, { paths: ["content", "visibility"] }),
+            });
+            existingCb.remoteUpdateTime = remoteUpdateTimeRaw;
+            const localMemo = await memoServiceClient.getMemo({ name: existingCb.localCommentName });
+            existingCb.localUpdateTime = getMemoUpdateTimeRaw(localMemo);
+            affectedLocalMemoNamesSet.add(localMemoName);
+            pulledCount += 1;
+          } catch (e) {
+            if (isConnectNotFoundError(e)) {
+              delete commentBindings[remoteCommentName];
+            } else {
+              failedCount += 1;
+            }
+          }
+        } else {
+          // Create local comment
+          try {
+            const commentData = create(MemoSchema, {
+              content: remoteContent,
+              visibility: toVisibility(readString(remoteCommentRaw, "visibility")),
+            });
+            const localComment = await memoServiceClient.createMemoComment({
+              name: localMemoName,
+              comment: commentData,
+            });
+            commentBindings[remoteCommentName] = {
+              localCommentName: localComment.name,
+              parentLocalName: localMemoName,
+              parentRemoteName: remoteMemoName,
+              remoteUpdateTime: remoteUpdateTimeRaw,
+              localUpdateTime: getMemoUpdateTimeRaw(localComment),
+            };
+            localCommentToRemote.set(localComment.name, remoteCommentName);
+            affectedLocalMemoNamesSet.add(localMemoName);
+            pulledCount += 1;
+          } catch {
+            failedCount += 1;
+          }
+        }
+      }
+
+      // Delete local comments whose remote counterpart is gone
+      for (const [remoteCommentName, cb] of Object.entries(commentBindings)) {
+        if (cb.parentRemoteName !== remoteMemoName) continue;
+        if (seenRemoteCommentNames.has(remoteCommentName)) continue;
+
+        try {
+          await memoServiceClient.deleteMemo({ name: cb.localCommentName });
+        } catch (e) {
+          if (!isConnectNotFoundError(e)) {
+            failedCount += 1;
+            continue;
+          }
+        }
+        delete commentBindings[remoteCommentName];
+        localCommentToRemote.delete(cb.localCommentName);
+        affectedLocalMemoNamesSet.add(localMemoName);
+        deletedCount += 1;
+      }
+    }
+
+    setCommentBindings(normalizedServerUrl, commentBindings);
+    return { ok: true, pushedCount, pulledCount, deletedCount, failedCount, affectedLocalMemoNames: Array.from(affectedLocalMemoNamesSet) };
+  } catch {
+    setCommentBindings(normalizedServerUrl, commentBindings);
+    return { ok: false, pushedCount, pulledCount, deletedCount, failedCount, affectedLocalMemoNames: Array.from(affectedLocalMemoNamesSet) };
   }
 };

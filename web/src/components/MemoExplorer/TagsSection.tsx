@@ -15,7 +15,7 @@ interface Props {
 const TagsSection = (props: Props) => {
   const t = useTranslate();
   const { getFiltersByFactor, addFilter, removeFilter } = useMemoFilterContext();
-  const [treeMode, setTreeMode] = useLocalStorage<boolean>("tag-view-as-tree", false);
+  const [treeMode, setTreeMode] = useLocalStorage<boolean>("tag-view-as-tree", true);
   const [treeAutoExpand, setTreeAutoExpand] = useLocalStorage<boolean>("tag-tree-auto-expand", false);
 
   const tags = Object.entries(props.tagCount)

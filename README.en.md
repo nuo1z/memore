@@ -4,7 +4,30 @@
 
 Memore is a **local-first personal note-taking app** built on [Memos](https://github.com/usememos/memos), designed for Windows and Android. It retains the core capabilities of Memos while significantly improving the editing experience, UI immersion, and local data management, with full bidirectional sync support for remote Memos instances.
 
-Current version: **v0.2.1**
+Current version: **v0.3.0**
+
+---
+
+## v0.3.0 Changelog
+
+### New Features
+
+- **Bidirectional comment sync**: Full bidirectional synchronization for comments. Comments created/modified/deleted locally are automatically synced to the remote server, and remote comment changes are pulled to local. Comment sync runs automatically after each Push+Pull cycle — no separate toggle needed.
+
+- **Tag tree mode enabled by default**: New installations default to tree view for tags (e.g., `parent/child`), no manual switching required.
+
+### Fixes & Improvements
+
+- **Fixed delete not triggering sync**: Deleting a local memo no longer silently fails to sync — the deletion is now automatically pushed to the remote server.
+
+- **Fixed narrow comment blocks**: Comment blocks in the MemoDetail page were missing `w-full`, causing them to render too narrow on mobile/small screens.
+
+- **Sync performance improvements**:
+  - Default pageSize increased from 100 to 200, reducing pagination requests
+  - Attachment sync now runs in parallel (up to 3 concurrent), significantly speeding up sync for multi-attachment memos
+  - Default maxPages increased from 10 to 20, supporting larger note collections
+
+- **Android icon optimization**: Foreground icon logo reduced from 65% to 50% of the total icon area for a cleaner, more centered look.
 
 ---
 
@@ -329,6 +352,7 @@ Configure in **Settings > Preferences > Memore Sync**:
 |------|--------------|--------|
 | Memo content | Always synced | — |
 | Attachments | Always synced | — |
+| Comments | Always synced | — |
 | Visibility (private/public/workspace) | Always synced | — |
 | Pinned status | Optional | "Sync pinned status" toggle |
 | Archived status | Optional | "Sync archived status" toggle |

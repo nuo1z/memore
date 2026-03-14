@@ -52,7 +52,6 @@
     right: 0;
     z-index: 95;
     pointer-events: none;
-    border-bottom: 1px solid var(--border);
   }
 
   html.mobile-capacitor-android [data-slot="sheet-overlay"],
@@ -209,6 +208,40 @@
     color: var(--foreground) !important;
   }
 
+  /* Desktop(Wails): keep fullscreen toolbar below draggable title bar. */
+  html.memore-desktop .vditor--fullscreen {
+    top: 2rem !important;
+    height: calc(100vh - 2rem) !important;
+  }
+
+  html.memore-desktop .vditor--fullscreen::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2rem;
+    background-color: var(--muted);
+    z-index: 91;
+  }
+
+  /* Android(Capacitor): keep fullscreen toolbar below status bar safe area. */
+  html.mobile-capacitor-android .vditor--fullscreen {
+    top: var(--memore-android-safe-top) !important;
+    height: calc(100vh - var(--memore-android-safe-top)) !important;
+  }
+
+  html.mobile-capacitor-android .vditor--fullscreen::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--memore-android-safe-top);
+    background-color: var(--muted);
+    z-index: 96;
+  }
+
   html.mobile-capacitor-android .memore-vditor-host {
     min-height: max(14rem, calc(22rem - var(--memore-visual-viewport-offset)));
   }
@@ -218,19 +251,31 @@
     grid-template-columns: repeat(6, minmax(0, 1fr));
     justify-items: center;
     align-items: center;
-    gap: 6px;
-    padding: 8px;
+    gap: 2px;
+    padding: 4px;
   }
 
-  html.mobile-capacitor-android .memore-vditor-host .vditor-toolbar__divider {
+  html.mobile-capacitor-android .vditor--fullscreen .vditor-toolbar {
+    display: grid !important;
+    grid-template-columns: repeat(9, minmax(0, 1fr));
+    justify-items: center;
+    align-items: center;
+    gap: 2px;
+    padding: 4px;
+  }
+
+  html.mobile-capacitor-android .memore-vditor-host .vditor-toolbar__divider,
+  html.mobile-capacitor-android .vditor--fullscreen .vditor-toolbar__divider {
     display: none !important;
   }
 
-  html.mobile-capacitor-android .memore-vditor-host .vditor-toolbar button[data-type="edit-mode"] {
+  html.mobile-capacitor-android .memore-vditor-host .vditor-toolbar button[data-type="edit-mode"],
+  html.mobile-capacitor-android .vditor--fullscreen .vditor-toolbar button[data-type="edit-mode"] {
     display: none !important;
   }
 
-  html.mobile-capacitor-android .memore-vditor-host .vditor-toolbar .vditor-tooltipped {
+  html.mobile-capacitor-android .memore-vditor-host .vditor-toolbar .vditor-tooltipped,
+  html.mobile-capacitor-android .vditor--fullscreen .vditor-toolbar .vditor-tooltipped {
     width: 100%;
     min-width: 0;
     max-width: 40px;

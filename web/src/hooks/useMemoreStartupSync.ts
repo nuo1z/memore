@@ -7,6 +7,7 @@ import { userKeys } from "@/hooks/useUserQueries";
 import {
   type MemoreRemoteConnectionTestErrorCode,
   runMemoreSyncTaskWithLock,
+  syncMemoreComments,
   syncMemoreLocalMemosToRemote,
   syncMemoreRemoteMemosToLocal,
 } from "@/lib/memore-sync";
@@ -89,10 +90,13 @@ export const useMemoreStartupSync = (enabled: boolean) => {
             syncArchived,
           });
 
+          const commentResult = await syncMemoreComments({ serverUrl, accessToken });
+
           return {
             phase: "pull" as const,
             pushResult,
             pullResult,
+            commentResult,
           };
         });
 
@@ -133,16 +137,26 @@ export const useMemoreStartupSync = (enabled: boolean) => {
         const result = cycleResult.pullResult;
 
         if (result.ok) {
+          const startupCommentResult = cycleResult.commentResult;
+          const hasStartupCommentChanges = startupCommentResult &&
+            ((startupCommentResult.pushedCount ?? 0) > 0 || (startupCommentResult.pulledCount ?? 0) > 0 || (startupCommentResult.deletedCount ?? 0) > 0);
           if (
             (result.importedCount ?? 0) > 0 ||
             (result.updatedCount ?? 0) > 0 ||
             (result.deletedCount ?? 0) > 0 ||
-            (result.conflictCount ?? 0) > 0
+            (result.conflictCount ?? 0) > 0 ||
+            hasStartupCommentChanges
           ) {
-            await Promise.all([
+            const startupInvalidations: Promise<void>[] = [
               queryClient.invalidateQueries({ queryKey: memoKeys.lists() }),
               queryClient.invalidateQueries({ queryKey: userKeys.stats() }),
-            ]);
+            ];
+            if (hasStartupCommentChanges && startupCommentResult?.affectedLocalMemoNames) {
+              for (const memoName of startupCommentResult.affectedLocalMemoNames) {
+                startupInvalidations.push(queryClient.invalidateQueries({ queryKey: memoKeys.comments(memoName) }));
+              }
+            }
+            await Promise.all(startupInvalidations);
 
             if (cancelled) {
               return;

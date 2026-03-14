@@ -32,6 +32,18 @@ const DesktopTitleBar = () => {
     return () => clearInterval(intervalId);
   }, [isDesktop]);
 
+  useEffect(() => {
+    if (!isDesktop) {
+      document.documentElement.classList.remove("memore-desktop");
+      return;
+    }
+
+    document.documentElement.classList.add("memore-desktop");
+    return () => {
+      document.documentElement.classList.remove("memore-desktop");
+    };
+  }, [isDesktop]);
+
   const handleMinimize = useCallback(() => window.runtime?.WindowMinimise(), []);
   const handleMaximize = useCallback(() => window.runtime?.WindowToggleMaximise(), []);
   const handleClose = useCallback(() => window.runtime?.WindowHide(), []);
