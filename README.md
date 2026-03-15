@@ -8,6 +8,8 @@
 
 Memore 是基于开源项目 [Memos](https://github.com/usememos/memos) 深度定制的**本地个人笔记应用**，起名为Memore, 意味着Memos more, 更好用更强大的Memos, 专为 Windows 和 Android 平台设计。在保留 Memos 核心能力的基础上，Memore 大幅优化了编辑体验、界面沉浸感和本地数据管理，同时支持与远端 Memos 服务器双向同步。
 
+👉关于Memore的介绍、优势和使用方法，请看这篇文章：[Memore详细介绍](https://memos.nuonuo.tech/memos/MrCaeWF4qtu46k4U2Ldbog)
+
 这是个几乎完全由 AI 驱动的项目！Go 和安卓开发并不在我的常规技术栈内，于是在 Cursor、Windsurf 和 Antigravity 的强大辅助下才使这个想法最终得以顺利落地.
 请原谅项目中的各种不规范 \_(¦3」∠)_
 
@@ -27,28 +29,31 @@ Current version: **v0.3.0**
 
 本地优先,增强编辑器,云端同步,Windows&Android双端应用,附件下载保存...
 
-详情参见中文和英文完整文档
+详情参见Memore详细介绍和中文和英文完整文档
 
 Local-first, enhanced editor, cloud sync, dual-platform app for Windows & Android, attachment download & save...
 
-For details, see the full documentation in both Chinese and English.  
+For details, see the Memore introduce or full documentation in both Chinese and English.  
 
 ## 参考文档 - Quick Links
 
+- [Memore详细介绍](https://memos.nuonuo.tech/memos/MrCaeWF4qtu46k4U2Ldbog)
+
 - [English Documentation](README.en.md) — Full feature list, setup guide, and configuration
+
 - [中文文档](README.zh-CN.md) — 完整功能介绍、安装指南和配置说明
+
 - [Windows Desktop Build Guide](packaging/windows/README.md)
+
 - [Android Build Guide](packaging/android/README.md)
 
 ## 软件图片 - Pictures
 
-![Windows 主界面](memorewindowsmain.png)
+![Windows 主界面](memoreexe1.png)
 
-![Windows 笔记页](memorewindowspage.png)
+![Windows 笔记页](memoreexe2.png)
 
 ![Android 端](memoreapk.jpg)
-
-
 
 ## 快速开始 - Quick Start
 
