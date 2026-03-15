@@ -53,7 +53,7 @@ For details, see the Memore introduce or full documentation in both Chinese and 
 
 ![Windows 笔记页](memoreexe2.png)
 
-![Android 端](memoreapk.jpg)
+![Android 端](memoreapk1.jpg)
 
 ## 快速开始 - Quick Start
 
